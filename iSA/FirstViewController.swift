@@ -20,6 +20,11 @@ class FirstViewController: UIViewController {
         // Dispose of any resources that can be recreated.
     }
 
+    @IBAction func testClicked(sender: AnyObject) {
+        let chat = Chatroom()
+        
+        chat.test()
+    }
 
 }
 
