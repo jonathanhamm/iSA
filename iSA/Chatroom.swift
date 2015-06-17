@@ -8,11 +8,57 @@
 
 import UIKit
 
+class User {
+    let chatRoom: Chatroom
+    let maxUserNameSize = 20
+    let id: String
+    var name: String = ""
 
+    init(userSelf: Chatroom) {
+        self.chatRoom = userSelf
+        id = chatRoom.parseId()
+        parseUsername()
+        chatRoom.finish()
+    }
+    
+    init(userRemote: Chatroom) {
+        self.chatRoom = userRemote
+        id = chatRoom.parseId()
+        parseUsername()
+        chatRoom.finish()
+    }
+    
+    func parseUsername() -> Void {
+        var count = 0
+        var c = chatRoom.nextChar()!
+        
+        while(c == "#") {
+            c = chatRoom.nextChar()!
+            count++
+        }
+        
+        let usernameLength = maxUserNameSize - count
+        name.append(c)
+        for _ in 2 ... usernameLength {
+            name.append(chatRoom.nextChar()!)
+        }
+        
+        println("username: " + name)
+    }
+    
+}
 
 class Chatroom: NSObject, NSStreamDelegate {
     
     let saInit = "08HxO9TdCC62Nwln1P"
+    let finishLogin = "03_"
+    
+    let ui: FirstViewController
+    
+    let maxRoomName = 20
+    
+    var usernameMap = Dictionary<String, User>()
+    var uidMap = Dictionary<String, User>()
     
     enum Server: String {
         case S_2D_CENTRAL = "74.86.43.9"
@@ -36,19 +82,25 @@ class Chatroom: NSObject, NSStreamDelegate {
     var read: NSInputStream! = nil
     var write: NSOutputStream! = nil
     var isWriteable = false
-    var host: Server = Server.S_NONE
+    var user: User? = nil
+    
+    let username: String
+    let password: String
+    let server: Server
     
     
+    init(ui: FirstViewController, username: String, password: String, server: Server) {
+        self.ui = ui
+        self.username = username
+        self.password = password
+        self.server = server
+        
+        super.init()
 
- 
-    func connect(username: String, password: String, server: Server) -> Bool {
-        //Connection.connect(server.description, port: saPort)
-     //   let connection = Connection(server.description, port: saPort)
-        initStreams(server)
-        return true
+        connect()
     }
     
-    func initStreams(server: Server) -> Bool {
+    func connect() -> Bool {
         var pInput: NSInputStream? = nil
         var pOutput: NSOutputStream? = nil
         
@@ -86,11 +138,7 @@ class Chatroom: NSObject, NSStreamDelegate {
         
         return false
     }
-    
-    func test() {
-        self.connect("obama.in.bubble.bath", password: "asdf", server: Server.S_2D_CENTRAL)
-    }
-    
+        
     func writeString(str: String) {
         let cstr = str.cStringUsingEncoding(NSUTF8StringEncoding)!
     
@@ -101,28 +149,95 @@ class Chatroom: NSObject, NSStreamDelegate {
 
     func nextChar() -> Character? {
         var byte: UInt8 = 0
-        
         read.read(&byte, maxLength: 1)
         return (byte == 0) ? nil : Character(UnicodeScalar(byte))
     }
     
+    func sendAuth() -> Void {
+        let msg = "09\(username);\(password)"
+        writeString(msg)
+    }
+    
+    func parseRoomsList() -> Void {
+        finish()
+    }
+
     func parse() -> Void {
         
         func parse0() -> Void {
             if let c = nextChar() {
                 switch(c) {
-                    case "8": println("check server good!")
-                    default: println("wtf")
+                    case "1": parseRoomsList()
+                    case "8": sendAuth()
+                    case "9": println("server error")
+                    default: break
                 }
             }
         }
         
-        if let c = nextChar() {
-            if(c == "0") {
-                parse0()
+        func parseA() -> Void {
+            writeString(finishLogin)
+            user = User(userSelf: self)
+            usernameMap[user!.name] = user!
+            uidMap[user!.name] = user!
+        }
+        
+        func parseD() -> Void {
+            let id = parseId()
+            if let u = uidMap.removeValueForKey(id) {
+                println("\(u.name) left lobby")
+            }
+        }
+        
+        func parseM() -> Void {
+            let id = parseId()
+            let sender = uidMap[id]
+            let type = nextChar()!
+            let body = getRemainder()
+            
+            if(type == "9") {
+                if let s = sender {
+                    println("\(s.name): \(body)")
+                }
+                else {
+                    perror("error")
+                }
+            }
+            else if(type == "P") {
+                if let s = sender {
+                    println("\(s.name) <private>: \(body)")
+                }
+                else {
+                    perror("error")
+                }
             }
             else {
-                
+                println("weird message")
+            }
+            
+        }
+        
+        func parseU() -> Void {
+            let user = User(userRemote: self)
+            usernameMap[user.name] = user
+            uidMap[user.id] = user
+            
+            ui.usernameList.beginUpdates()
+            
+            ui.usernameList.endUpdates()
+            
+            //ui.usernameList.inser
+        }
+        
+        if let c = nextChar() {
+            
+            switch(c) {
+                case "0": parse0()
+                case "A": parseA()
+                case "D": parseD()
+                case "M": parseM()
+                case "U": parseU()
+                default: break
             }
         }
         
@@ -132,7 +247,9 @@ class Chatroom: NSObject, NSStreamDelegate {
         switch(eventCode) {
             case NSStreamEvent.HasBytesAvailable:
                 if(aStream == read) {
-                    parse()
+                    while(read.hasBytesAvailable) {
+                        parse()
+                    }
                 }
                 else {
                     
@@ -161,4 +278,29 @@ class Chatroom: NSObject, NSStreamDelegate {
         }
     }
     
+    func parseId() -> String {
+        var str = ""
+        for _ in 1 ... 3 { str.append(nextChar()!) }
+        return str
+    }
+    
+    func getRemainder() -> String {
+        var str = ""
+        var res = nextChar()
+        
+        while(res != nil) {
+            str.append(res!)
+            res = nextChar()
+        }
+        return str
+    }
+    
+    func finish() -> Void {
+        var c = nextChar()
+        
+        while(c != nil) {
+            c = nextChar()
+        }
+    }
+
 }
